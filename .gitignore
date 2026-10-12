@@ -47,3 +47,6 @@ Thumbs.db
 
 # pytest
 .pytest_cache/
+
+# Partición train/test generada por pycaret_experimentos.ipynb
+data/

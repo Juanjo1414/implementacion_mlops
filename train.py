@@ -225,8 +225,8 @@ def train_and_evaluate(X_train, X_test, y_train, y_test, preprocessor):
     print("Resultados guardados en test_predictions.parquet")
     print(
         "\n📊 Para ver los experimentos en MLFlow ejecuta:\n"
-        "   uv run mlflow ui\n"
-        "   Luego abre http://localhost:5000 en tu navegador\n"
+        "   uv run mlflow ui --port 5001\n"
+        "   Luego abre http://localhost:5001 en tu navegador\n"
     )
 
 

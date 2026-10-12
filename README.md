@@ -39,7 +39,8 @@ mlops/
 ├── monitor.py                  # 📈 Valores atípicos y registro de predicciones
 ├── feature_store.py            # 🧮 Feature Store centralizado
 ├── retrain.py                  # 🔄 Reentrenamiento automático
-├── eda.ipynb                   # 📊 EDA + PyCaret + MLflow + exportación
+├── eda.ipynb                   # 📊 EDA tradicional + Sweetviz
+├── pycaret_experimentos.ipynb  # 🤖 PyCaret + corridas MLflow + exportación
 ├── reportes/                   # 📑 Reportes HTML de Sweetviz (generados por eda.ipynb)
 ├── 1553768847-housing.csv      # 📁 Dataset original
 ├── pyproject.toml              # 📦 Dependencias (uv)
@@ -82,7 +83,7 @@ uv sync
 | *(principal)* | pandas, scikit-learn, mlflow, fastapi, uvicorn, pyarrow | Siempre (también en Docker) |
 | `dev` | pytest, flake8, httpx2 | Tests y CI |
 | `eda` | jupyter, matplotlib, seaborn, sweetviz, nbformat | Notebook `eda.ipynb` |
-| `pycaret` *(opcional)* | PyCaret 4.0.0a8 | Sección 16 del notebook |
+| `pycaret` *(opcional)* | PyCaret 4.0.0a8 | Notebook `pycaret_experimentos.ipynb` |
 
 Para instalar solo lo necesario para producción: `uv sync --no-default-groups`.
 
@@ -110,9 +111,11 @@ Esto entrena **10 modelos de regresión** con **validación cruzada 5-Fold** y r
 ### 3. Ver experimentos en MLFlow
 
 ```bash
-uv run mlflow ui
-# Abre http://localhost:5000
+uv run mlflow ui --port 5001
+# Abre http://localhost:5001
 ```
+
+> ⚠️ En macOS no uses el puerto 5000 (el predeterminado de MLflow): lo ocupa el Receptor AirPlay, y en `localhost:5000` responde AirPlay en vez de MLflow, así que no se ven los experimentos.
 
 ### 4. Levantar la API
 
@@ -155,7 +158,7 @@ curl -X POST http://localhost:8000/predict \
 
 ## 🔬 Análisis Exploratorio (EDA)
 
-El notebook `eda.ipynb` contiene **16 secciones**: 13 de EDA tradicional, 2 de EDA automatizado con Sweetviz y una de PyCaret:
+El notebook `eda.ipynb` contiene **15 secciones**: 13 de EDA tradicional y 2 de EDA automatizado con Sweetviz. Los experimentos de PyCaret están en su propio cuaderno, `pycaret_experimentos.ipynb`:
 
 1. **Información general** del dataset
 2. **Estadísticas descriptivas** con heatmap
@@ -172,7 +175,6 @@ El notebook `eda.ipynb` contiene **16 secciones**: 13 de EDA tradicional, 2 de E
 13. **Conclusiones** del análisis
 14. **Sweetviz** — reporte general, Train vs Test (misma partición de `train.py`) e Interior vs Costa
 15. **Tradicional vs Sweetviz** — verificación de que ambos coinciden y tabla comparativa
-16. **PyCaret 4 + MLflow** — comparación por CV, un run y modelo por candidato, prueba externa, exportación y API
 
 Los reportes HTML de Sweetviz quedan en `reportes/` y se enlazan desde la presentación.
 
@@ -186,10 +188,20 @@ PyCaret `4.0.0a8` está fijado como grupo opcional en `uv.lock`. Es una versión
 
 ```bash
 uv sync --locked --group pycaret
-uv run --group pycaret jupyter notebook eda.ipynb
+uv run --group pycaret jupyter notebook pycaret_experimentos.ipynb
 ```
 
-Ejecuta la sección 16 para guardar `models/pycaret_housing.pkl`. El notebook utiliza una transformación numérica compartida con [pycaret_app.py](pycaret_app.py), reserva una prueba externa antes de comparar candidatos y guarda el pipeline final con su preprocesamiento. Para servirlo localmente:
+El cuaderno está organizado en pasos, cada uno explicado antes de su código:
+
+1. **Partir los datos** 80/20 (misma semilla que `train.py`) y guardarlos en `data/train.csv` y `data/test.csv`; es lo primero del cuaderno
+2. **Librerías y configuración**
+3. **Preparar las columnas** con `prepare_pycaret_features`, la misma función de [pycaret_app.py](pycaret_app.py); el cuaderno muestra su código
+4. **Probar 21 modelos** de PyCaret (lineales, robustos, KNN, SVM, árboles, ensambles, MLP y un `dummy` de referencia) con columnas normalizadas y validación cruzada de 5 partes
+5. **Guardar una corrida de MLflow por modelo** (hiperparámetros + métricas de CV), consultarlas y **abrir la interfaz de MLflow** en http://localhost:5001
+6. **Evaluar el mejor** con `data/test.csv`, que no se usó para elegirlo
+7. **Exportar** `models/pycaret_housing.pkl` y guardar la corrida `selected_final_model` con las métricas de prueba y el modelo
+
+Para servir el modelo localmente:
 
 ```bash
 uv run uvicorn pycaret_app:app --reload
@@ -279,7 +291,7 @@ docker compose up --build
 # El token de Jupyter aparece en los logs del servicio
 docker compose logs notebook
 
-# Después de ejecutar la sección 16 del notebook
+# Después de ejecutar pycaret_experimentos.ipynb
 docker compose restart api
 ```
 

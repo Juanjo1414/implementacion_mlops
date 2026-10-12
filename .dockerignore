@@ -8,6 +8,7 @@ __pycache__/
 
 # Los artefactos se comparten por volúmenes de Compose.
 models/
+data/
 mlruns/
 mlflow.db
 best_model.pkl

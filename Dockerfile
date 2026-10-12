@@ -44,7 +44,7 @@ CMD ["mlflow", "server", "--host", "0.0.0.0", "--port", "5050", \
 FROM python:3.12-slim AS notebook
 WORKDIR /app
 COPY --from=notebook-dependencies /app/.venv /app/.venv
-COPY eda.ipynb pycaret_features.py 1553768847-housing.csv ./
+COPY eda.ipynb pycaret_experimentos.ipynb pycaret_features.py 1553768847-housing.csv ./
 ENV PATH="/app/.venv/bin:$PATH" MPLCONFIGDIR=/tmp/matplotlib
 EXPOSE 8888
 CMD ["jupyter", "notebook", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root"]

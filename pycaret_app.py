@@ -1,4 +1,4 @@
-"""API FastAPI para el pipeline exportado desde la sección PyCaret del notebook."""
+"""API FastAPI para el pipeline exportado por pycaret_experimentos.ipynb."""
 
 import logging
 import os

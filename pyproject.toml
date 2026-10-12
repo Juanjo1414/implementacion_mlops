@@ -32,7 +32,7 @@ eda = [
     "sweetviz>=2.3.3",
 ]
 # PyCaret 4 usa la API orientada a objetos y requiere habilitar su prerelease.
-# Solo el notebook de entrenamiento necesita este grupo; la API carga sklearn.
+# Solo pycaret_experimentos.ipynb necesita este grupo; la API carga sklearn.
 pycaret = [
     "pycaret==4.0.0a8",
 ]

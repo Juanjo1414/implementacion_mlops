@@ -11,6 +11,7 @@ services:
     volumes:
       - ./models:/app/models
       - ./eda.ipynb:/app/eda.ipynb
+      - ./pycaret_experimentos.ipynb:/app/pycaret_experimentos.ipynb
       - ./reportes:/app/reportes
     depends_on:
       - mlflow
