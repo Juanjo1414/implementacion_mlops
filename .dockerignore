@@ -16,3 +16,4 @@ test_predictions.parquet
 feature_store/
 logs/
 reportes/
+runtime/

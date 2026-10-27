@@ -16,7 +16,9 @@ services:
     depends_on:
       - mlflow
 
-  # La API lee el archivo exportado al arrancar; después de entrenar, reiniciarla.
+  # Al arrancar, la API adopta el .pkl exportado si es nuevo (reiniciarla después
+  # de ejecutar el cuaderno); el campeón, los lotes y el historial viven en api_data.
+  # Sin ADMIN_TOKEN no se pueden subir datos ni reentrenar: ADMIN_TOKEN=... docker compose up
   api:
     build:
       context: .
@@ -24,9 +26,13 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      MODEL_PATH: /app/models/pycaret_housing.pkl
+      SEED_MODEL_PATH: /app/models/pycaret_housing.pkl
+      DATA_DIR: /data
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      MLFLOW_TRACKING_URI: http://mlflow:5050
     volumes:
       - ./models:/app/models:ro
+      - api_data:/data
     restart: unless-stopped
 
   # SQLite y artefactos viven en un volumen nombrado, no dentro de la imagen.
@@ -42,3 +48,4 @@ services:
 
 volumes:
   mlflow_data:
+  api_data:

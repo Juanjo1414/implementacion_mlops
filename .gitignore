@@ -50,3 +50,6 @@ Thumbs.db
 
 # Partición train/test generada por pycaret_experimentos.ipynb
 data/
+
+# Estado local de la API (modelo campeón, lotes subidos, predicciones)
+runtime/

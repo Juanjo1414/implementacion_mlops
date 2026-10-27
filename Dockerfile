@@ -16,19 +16,6 @@ RUN uv sync --locked --no-default-groups
 FROM dependencies AS notebook-dependencies
 RUN uv sync --locked --no-default-groups --group eda --group pycaret
 
-# API: carga el modelo exportado desde el volumen /app/models.
-FROM python:3.12-slim AS api
-WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
-COPY --from=dependencies /app/.venv /app/.venv
-COPY pycaret_app.py pycaret_features.py ./
-ENV PATH="/app/.venv/bin:$PATH" MODEL_PATH=/app/models/pycaret_housing.pkl
-EXPOSE 8000
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD curl -fsS http://localhost:8000/health || exit 1
-CMD ["uvicorn", "pycaret_app:app", "--host", "0.0.0.0", "--port", "8000"]
-
 # MLflow: el volumen /mlflow conserva SQLite y los artefactos entre reinicios.
 FROM python:3.12-slim AS mlflow
 WORKDIR /app
@@ -48,3 +35,22 @@ COPY eda.ipynb pycaret_experimentos.ipynb pycaret_features.py 1553768847-housing
 ENV PATH="/app/.venv/bin:$PATH" MPLCONFIGDIR=/tmp/matplotlib
 EXPOSE 8888
 CMD ["jupyter", "notebook", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root"]
+
+# API (última etapa: es la que construyen Render y Railway con este Dockerfile).
+# El modelo, los datos subidos y el historial viven en el volumen DATA_DIR; los
+# cron jobs usan esta misma imagen con otro comando (python cron_job.py ...).
+FROM python:3.12-slim AS api
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=dependencies /app/.venv /app/.venv
+COPY pycaret_app.py pycaret_features.py model_store.py cron_job.py 1553768847-housing.csv ./
+COPY static ./static
+# PORT lo reemplazan Render y Railway; SEED_MODEL_PATH solo existe si se monta models/.
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 PORT=8000 DATA_DIR=/data \
+    SEED_MODEL_PATH=/app/models/pycaret_housing.pkl
+EXPOSE 8000
+# Sin modelo previo, el arranque entrena uno inicial: start-period le da tiempo.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
+    CMD curl -fsS "http://localhost:${PORT}/health" || exit 1
+CMD ["sh", "-c", "exec uvicorn pycaret_app:app --host 0.0.0.0 --port ${PORT}"]

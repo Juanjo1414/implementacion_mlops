@@ -1,0 +1,47 @@
+# Blueprint de Render: API con disco persistente + dos cron jobs que la llaman por HTTP.
+# Render pide los valores con sync: false al crear el Blueprint: usa el MISMO
+# ADMIN_TOKEN en la API y en el cron de reentrenamiento, y en API_URL la URL
+# pública de la API (https://housing-api.onrender.com o la que asigne Render).
+services:
+  - type: web
+    name: housing-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    # El RandomForest ocupa ~700 MB al reentrenar: 512 MB no alcanzan.
+    # El disco persistente requiere un plan pago.
+    plan: 1c-2g
+    healthCheckPath: /health
+    disk:
+      name: housing-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DATA_DIR
+        value: /data
+      - key: ADMIN_TOKEN
+        sync: false
+
+  - type: cron
+    name: housing-health-check
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: 0.5c-512mb
+    schedule: "*/15 * * * *"
+    dockerCommand: python cron_job.py health
+    envVars:
+      - key: API_URL
+        sync: false
+
+  - type: cron
+    name: housing-retrain
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: 0.5c-512mb
+    # Días 1 y 15 de cada mes a las 06:00 UTC (cron no puede expresar "cada 14 días").
+    schedule: "0 6 1,15 * *"
+    dockerCommand: python cron_job.py retrain
+    envVars:
+      - key: API_URL
+        sync: false
+      - key: ADMIN_TOKEN
+        sync: false
