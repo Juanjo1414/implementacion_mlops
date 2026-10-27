@@ -211,3 +211,24 @@ def test_cron_end_to_end_against_running_api(client, monkeypatch):
     assert cron_job.check_health() == 0
     assert cron_job.request_retrain() == 0
     assert pycaret_app.store.read_state()["data_requested_at"] is not None
+
+
+def test_schedule_matches_cloud_cron_rules():
+    """`schedule` sigue las mismas reglas que */15 * * * * y 0 6 1,15 * *."""
+    from datetime import datetime, timezone
+
+    def at(day, hour, minute):
+        return cron_job.due_tasks(datetime(2026, 11, day, hour, minute, tzinfo=timezone.utc), 15, {1, 15}, 6)
+
+    assert at(3, 10, 30) == ["health"]
+    assert at(3, 10, 31) == []
+    assert at(1, 6, 0) == ["health", "retrain"]
+    assert at(15, 6, 0) == ["health", "retrain"]
+    assert at(15, 7, 0) == ["health"]
+    assert at(16, 6, 0) == ["health"]
+
+
+def test_run_task_reports_missing_variables(monkeypatch):
+    """Sin API_URL la tarea falla con código 1 en vez de detener el programador."""
+    monkeypatch.delenv("API_URL", raising=False)
+    assert cron_job.run_task("health") == 1

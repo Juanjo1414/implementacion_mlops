@@ -38,6 +38,7 @@ mlops/
 ├── pycaret_app.py              # 🚀 API PyCaret: interfaz, monitoreo, subida de datos y reentrenamiento
 ├── model_store.py              # 🏆 Modelo campeón, lotes subidos e historial en DATA_DIR
 ├── cron_job.py                 # ⏰ Cron jobs: revisión de salud y reentrenamiento quincenal
+├── .env.example                # 🔑 Plantilla de .env (ADMIN_TOKEN para Docker Compose)
 ├── static/index.html           # 🖥️ Interfaz web servida en /
 ├── pycaret_features.py         # 🧩 Esquema compartido notebook/API
 ├── monitor.py                  # 📈 Valores atípicos y registro de predicciones
@@ -51,7 +52,7 @@ mlops/
 ├── uv.lock                     # 🔒 Versiones exactas
 ├── .python-version             # 🐍 Python 3.12
 ├── Dockerfile                  # 🐳 Imagen multi-stage
-├── compose.yml                 # 🐳 Docker Compose (API + MLFlow)
+├── compose.yml                 # 🐳 Docker Compose (API + cron + MLFlow + Jupyter)
 ├── render.yaml                 # ☁️ Blueprint de Render (API + 2 cron jobs)
 ├── railway.json                # ☁️ Configuración de Railway para la API
 ├── deploy/railway.*.json       # ☁️ Configuración de Railway para cada cron job
@@ -367,17 +368,36 @@ uv run python cron_job.py retrain
 ## 🐳 Docker
 
 ```bash
-# Construir y levantar MLflow, Jupyter y la API PyCaret
-docker compose up --build
+# 1. Una sola vez: crear .env con el token de administración (está en .gitignore)
+cp .env.example .env
+uv run python -c "import secrets; print(secrets.token_urlsafe(32))"   # pégalo en .env
 
-# El token de Jupyter aparece en los logs del servicio
+# 2. Construir y levantar todo en segundo plano
+#    --build reconstruye las imágenes si cambió el código (con caché, es rápido)
+docker compose up -d --build
+
+# Token de Jupyter y mensajes de los cron jobs
 docker compose logs notebook
+docker compose logs -f cron
 
 # Después de ejecutar pycaret_experimentos.ipynb
 docker compose restart api
 ```
 
-Abre Jupyter en `http://localhost:8888`, MLflow en `http://localhost:5050` y la interfaz de la API en `http://localhost:8000` (Swagger en `/docs`). Para subir datos y reentrenar, levanta todo con `ADMIN_TOKEN=secreto docker compose up --build`. Las tres imágenes se construyen con `uv.lock`: API y MLflow usan dependencias principales; Jupyter añade los grupos `eda` y `pycaret`. El directorio `models/` se comparte entre notebook y API, y un volumen nombrado conserva el servidor MLflow. Si no hay modelo exportado, la API entrena el pipeline inicial al arrancar. Después de exportar uno nuevo desde el cuaderno, reinicia la API para que lo adopte. El campeón, los lotes y el historial se guardan en el volumen `api_data`.
+| Servicio | URL | Qué hace |
+|----------|-----|----------|
+| `api` | http://localhost:8000 | Interfaz, predicciones, subida de datos y reentrenamiento (Swagger en `/docs`) |
+| `cron` | — | Revisa la API cada 15 min y pide el reentrenamiento los días 1 y 15 a las 06:00 UTC (`cron_job.py schedule`), igual que los cron jobs de Railway/Render |
+| `mlflow` | http://localhost:5050 | Experimentos del cuaderno y registro de cada reentrenamiento |
+| `notebook` | http://localhost:8888 | Jupyter con PyCaret |
+
+Compose lee `ADMIN_TOKEN` de `.env` y se detiene con un mensaje si falta. Sin `--build`, Compose reutiliza las imágenes que ya existan aunque el código haya cambiado. Si el puerto 8888 está ocupado (por ejemplo, por un Jupyter fuera de Docker), define `JUPYTER_PORT=8889` en `.env`. Las imágenes se construyen con `uv.lock`: API, cron y MLflow usan dependencias principales; Jupyter añade los grupos `eda` y `pycaret`. El directorio `models/` se comparte entre notebook y API. Si no hay modelo exportado, la API entrena el pipeline inicial al arrancar; después de exportar uno nuevo desde el cuaderno, reinicia la API para que lo adopte. El campeón, los lotes y el historial se guardan en el volumen `api_data`, y MLflow en `mlflow_data`.
+
+Para probar un reentrenamiento sin esperar al día 1 o 15:
+
+```bash
+docker compose exec cron python cron_job.py retrain
+```
 
 ---
 
@@ -389,14 +409,14 @@ uv run pytest -v
 uv run flake8 *.py tests/ --max-line-length=120
 ```
 
-36 tests que cubren:
+38 tests que cubren:
 - ✅ Feature Store (features derivadas, preprocesador, info, versiones) — 4
 - ✅ Monitor (logging, drift normal, drift extremo, resumen) — 5
 - ✅ Integridad de datos (CSV existe, columnas correctas, modelo existe) — 3
 - ✅ API (`/health`, `/predict` con el modelo de `train.py` y el de `retrain.py`, modelo ausente → 503, payload inválido → 422, valores atípicos) — 6
 - ✅ Serialización (los modelos se pueden guardar en MLflow con skops) — 2
 - ✅ PyCaret (esquema de features, inferencia y errores de la API) — 3
-- ✅ Reentrenamiento (arranque, validación de lotes, solicitud de datos, campeón vs. retador, token, interfaz, cron jobs) — 13
+- ✅ Reentrenamiento (arranque, validación de lotes, solicitud de datos, campeón vs. retador, token, interfaz, cron jobs y programador de Compose) — 15
 
 ---
 

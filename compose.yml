@@ -1,11 +1,18 @@
+# Uso: cp .env.example .env  (y cambia el token)  →  docker compose up -d --build
+# --build reconstruye las imágenes si cambió el código; sin él, Compose reutiliza
+# las imágenes ya construidas aunque estén desactualizadas.
+# Compose lee .env automáticamente; ADMIN_TOKEN es obligatorio para que la API
+# acepte datos nuevos y para que el servicio cron pueda pedir el reentrenamiento.
 services:
   # El notebook exporta el pipeline a ./models mediante el volumen compartido.
   notebook:
     build:
       context: .
       target: notebook
+    # JUPYTER_PORT en .env cambia el puerto local si 8888 ya está ocupado
+    # (por ejemplo, por un Jupyter abierto fuera de Docker).
     ports:
-      - "127.0.0.1:8888:8888"
+      - "127.0.0.1:${JUPYTER_PORT:-8888}:8888"
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5050
     volumes:
@@ -18,7 +25,6 @@ services:
 
   # Al arrancar, la API adopta el .pkl exportado si es nuevo (reiniciarla después
   # de ejecutar el cuaderno); el campeón, los lotes y el historial viven en api_data.
-  # Sin ADMIN_TOKEN no se pueden subir datos ni reentrenar: ADMIN_TOKEN=... docker compose up
   api:
     build:
       context: .
@@ -28,11 +34,31 @@ services:
     environment:
       SEED_MODEL_PATH: /app/models/pycaret_housing.pkl
       DATA_DIR: /data
-      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Copia .env.example a .env y define ADMIN_TOKEN}
       MLFLOW_TRACKING_URI: http://mlflow:5050
     volumes:
       - ./models:/app/models:ro
       - api_data:/data
+    restart: unless-stopped
+
+  # Hace el papel de los cron jobs de Railway/Render: revisa la API cada 15 min y
+  # pide el reentrenamiento los días 1 y 15 a las 06:00 UTC (cron_job.py schedule).
+  # Usa la misma imagen que la API y solo le habla por HTTP en la red de Compose.
+  cron:
+    build:
+      context: .
+      target: api
+    command: ["python", "cron_job.py", "schedule"]
+    environment:
+      API_URL: http://api:8000
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Copia .env.example a .env y define ADMIN_TOKEN}
+    # La imagen trae un HEALTHCHECK para el servidor web; este contenedor no lo es.
+    healthcheck:
+      disable: true
+    # Espera a que la API tenga modelo (/health = 200) antes de la primera revisión.
+    depends_on:
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
   # SQLite y artefactos viven en un volumen nombrado, no dentro de la imagen.

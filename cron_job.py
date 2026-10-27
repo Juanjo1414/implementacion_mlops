@@ -4,14 +4,21 @@ No leen el volumen del modelo (en ambas plataformas un disco pertenece a un solo
 servicio): todo pasa por HTTP. Solo usan la biblioteca estándar, así que también
 funcionan fuera del entorno de uv.
 
-    python cron_job.py health   # cada 15 min: /health + una predicción de prueba
-    python cron_job.py retrain  # días 1 y 15: reentrena si hay datos nuevos
+    python cron_job.py health    # cada 15 min: /health + una predicción de prueba
+    python cron_job.py retrain   # días 1 y 15: reentrena si hay datos nuevos
+    python cron_job.py schedule  # proceso permanente que ejecuta los dos anteriores
+                                 # a sus horas (servicio `cron` de Docker Compose)
+
+En Railway y Render la plataforma decide cuándo ejecutar `health` y `retrain`.
+Docker Compose no tiene cron jobs, por eso `schedule` hace ese papel en local.
 
 Variables de entorno:
     API_URL       URL pública de la API, p. ej. https://mi-api.up.railway.app
     ADMIN_TOKEN   solo para `retrain`; el mismo valor que tiene la API
     RETRAIN_POLL_SECONDS / RETRAIN_WAIT_SECONDS  (opcionales) cada cuánto
                   consultar el progreso y cuánto esperar como máximo
+    HEALTH_EVERY_MINUTES / RETRAIN_DAYS / RETRAIN_HOUR_UTC  (opcionales, solo
+                  `schedule`) por defecto 15, "1,15" y 6, igual que en la nube
 
 Código de salida: 0 = todo bien (incluye "faltan datos"), 1 = problema. La
 plataforma marca la ejecución como fallida cuando es distinto de 0, y eso es lo
@@ -26,6 +33,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 # Los mensajes van a la salida estándar, que la plataforma guarda como logs.
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -150,17 +158,48 @@ def request_retrain() -> int:
     return 0
 
 
-# Nombre de la tarea en la línea de comandos → función que la ejecuta.
-TASKS = {"health": check_health, "retrain": request_retrain}
+def due_tasks(now: datetime, health_every: int, retrain_days: set[int], retrain_hour: int) -> list[str]:
+    """Tareas que tocan en este minuto (UTC), con la misma regla que los cron de la nube.
+
+    health:  minutos múltiplos de `health_every`  (equivale a */15 * * * *)
+    retrain: minuto 0 de `retrain_hour` en los días `retrain_days`  (0 6 1,15 * *)
+    """
+    due = []
+    if now.minute % health_every == 0:
+        due.append("health")
+    if now.day in retrain_days and now.hour == retrain_hour and now.minute == 0:
+        due.append("retrain")
+    return due
 
 
-def main(argv: list[str]) -> int:
-    """Ejecuta la tarea pedida y devuelve el código de salida del proceso."""
-    if len(argv) != 2 or argv[1] not in TASKS:
-        print(f"Uso: python {argv[0]} {{{'|'.join(TASKS)}}}", file=sys.stderr)
-        return 2
+def run_schedule() -> int:
+    """Proceso permanente: cada minuto revisa qué toca y lo ejecuta.
+
+    Es un cron mínimo en Python para Docker Compose. Un fallo de una tarea
+    solo queda en los logs; el programador sigue corriendo para la siguiente.
+    """
+    health_every = int(os.getenv("HEALTH_EVERY_MINUTES", "15"))
+    retrain_days = {int(day) for day in os.getenv("RETRAIN_DAYS", "1,15").split(",")}
+    retrain_hour = int(os.getenv("RETRAIN_HOUR_UTC", "6"))
+    logger.info(
+        "Programador iniciado: salud cada %d min · reentrenamiento días %s a las %02d:00 UTC",
+        health_every, sorted(retrain_days), retrain_hour,
+    )
+    # Revisión inmediata al arrancar: confirma la conexión sin esperar 15 min.
+    run_task("health")
+    while True:
+        # Dormir hasta el inicio del siguiente minuto evita que el reloj se
+        # desfase y que una tarea se ejecute dos veces en el mismo minuto.
+        time.sleep(60 - time.time() % 60)
+        now = datetime.now(timezone.utc)
+        for name in due_tasks(now, health_every, retrain_days, retrain_hour):
+            run_task(name)
+
+
+def run_task(name: str) -> int:
+    """Ejecuta una tarea con el mismo manejo de errores que main()."""
     try:
-        return TASKS[argv[1]]()
+        return TASKS[name]()
     except KeyError as error:
         # os.environ["API_URL"] o ["ADMIN_TOKEN"] sin definir.
         logger.error("❌ Falta la variable de entorno %s", error)
@@ -168,6 +207,18 @@ def main(argv: list[str]) -> int:
         # API caída, URL mal escrita, sin red o respuesta que no es JSON.
         logger.error("❌ No se pudo contactar la API: %s", error)
     return 1
+
+
+# Nombre de la tarea en la línea de comandos → función que la ejecuta.
+TASKS = {"health": check_health, "retrain": request_retrain, "schedule": run_schedule}
+
+
+def main(argv: list[str]) -> int:
+    """Ejecuta la tarea pedida y devuelve el código de salida del proceso."""
+    if len(argv) != 2 or argv[1] not in TASKS:
+        print(f"Uso: python {argv[0]} {{{'|'.join(TASKS)}}}", file=sys.stderr)
+        return 2
+    return run_task(argv[1])
 
 
 if __name__ == "__main__":

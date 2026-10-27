@@ -53,3 +53,6 @@ data/
 
 # Estado local de la API (modelo campeón, lotes subidos, predicciones)
 runtime/
+
+# Secretos locales (copiar .env.example como .env)
+.env

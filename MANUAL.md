@@ -33,6 +33,8 @@ Hay **tres servicios** que usan la misma imagen Docker:
 | **Cron de salud** (`cron_job.py health`) | Revisa que la API responda y prediga bien | Cada 15 minutos |
 | **Cron de reentrenamiento** (`cron_job.py retrain`) | Pide a la API que se reentrene | Días 1 y 15 de cada mes, 06:00 UTC (01:00 en Colombia) |
 
+En Railway y Render son tres servicios. En Docker Compose los dos cron se juntan en un solo servicio, `cron`, que ejecuta `cron_job.py schedule`.
+
 ```
  Usuario ──► API (interfaz + modelo + volumen /data)
                ▲                ▲
@@ -105,14 +107,36 @@ uv run pytest -v
 uv run flake8 *.py tests/ --max-line-length=120
 ```
 
-### 3.5 (Opcional) Probar con Docker
+### 3.5 (Opcional) Todo con Docker Compose
+
+Levanta la API, el programador de cron jobs, MLflow y Jupyter con un solo comando. Necesitas Docker Desktop abierto.
+
+```bash
+cp .env.example .env
+uv run python -c "import secrets; print(secrets.token_urlsafe(32))"   # pega el valor en ADMIN_TOKEN de .env
+docker compose up -d --build
+```
+
+Usa siempre `--build`: sin él, Compose reutiliza las imágenes que ya existan aunque el código haya cambiado, y la API podría quedar desactualizada.
+
+| Servicio | Dónde | Para qué |
+|----------|-------|----------|
+| `api` | http://localhost:8000 | Interfaz y API |
+| `cron` | `docker compose logs -f cron` | Salud cada 15 min y reentrenamiento los días 1 y 15 (como en la nube) |
+| `mlflow` | http://localhost:5050 | Experimentos y registro de reentrenamientos |
+| `notebook` | http://localhost:8888 | Jupyter; el token sale en `docker compose logs notebook` |
+
+- `.env` está en `.gitignore`: el token no se sube a GitHub. Sin `.env`, Compose se detiene con el mensaje *"Copia .env.example a .env y define ADMIN_TOKEN"*.
+- Si el puerto 8888 está ocupado (por ejemplo, por un Jupyter abierto fuera de Docker), agrega `JUPYTER_PORT=8889` a `.env` y abre Jupyter en http://localhost:8889.
+- Para reentrenar sin esperar al día 1 o 15: `docker compose exec cron python cron_job.py retrain`.
+- Para apagar todo: `docker compose down` (los volúmenes con el modelo, los lotes y MLflow se conservan; `docker compose down -v` los borra).
+
+Si solo quieres la imagen de la API, la misma que construyen Railway y Render:
 
 ```bash
 docker build -t housing-api .
 docker run --rm -p 8000:8000 -e ADMIN_TOKEN=secreto -v housing-data:/data housing-api
 ```
-
-Es la misma imagen que construyen Railway y Render (la última etapa del `Dockerfile`).
 
 ---
 
@@ -330,6 +354,7 @@ Railway y Render marcan en rojo las ejecuciones que terminan con `❌`. No hay n
 
 - **Railway:** edita `cronSchedule` en `deploy/railway.retrain.json` (o el campo *Cron Schedule* del servicio).
 - **Render:** edita `schedule` del servicio `housing-retrain` en `render.yaml`.
+- **Docker Compose:** agrega `RETRAIN_DAYS`, `RETRAIN_HOUR_UTC` o `HEALTH_EVERY_MINUTES` al `environment` del servicio `cron` en `compose.yml`.
 
 Formato cron en **UTC**: `minuto hora día-del-mes mes día-de-la-semana`. Ejemplos:
 
@@ -376,6 +401,8 @@ Borra el contenido del volumen (`rm -rf /data/*` desde la terminal del servicio)
 | El CSV se rechaza por "valores no numéricos" | Comas decimales o separador `;` | Exportar con punto decimal y coma como separador |
 | Siempre sale "Se mantuvo el actual" | Los datos nuevos no mejoran el error en el holdout | Normal con pocos datos; acumula más lotes |
 | El cron de salud tarda ~1 min la primera vez (Render) | El servicio estaba dormido | Normal; el cron espera hasta 120 s |
+| `/data/upload` responde 404 en Docker Compose | La imagen de la API es anterior a estos cambios | `docker compose up -d --build` |
+| `port is already allocated` / `address already in use` en 8888 | Otro Jupyter usa ese puerto | `JUPYTER_PORT=8889` en `.env` |
 | Advertencia `X does not have valid feature names` en los logs | Viene del pipeline exportado por PyCaret | Inofensiva |
 
 ---
@@ -400,7 +427,7 @@ Borra el contenido del volumen (`rm -rf /data/*` desde la terminal del servicio)
 
 | Variable | Servicio | Valor por defecto | Descripción |
 |----------|----------|-------------------|-------------|
-| `ADMIN_TOKEN` | API, cron retrain | *(ninguno)* | Token de administración; sin él la administración queda deshabilitada |
+| `ADMIN_TOKEN` | API, cron retrain | *(ninguno)* | Token de administración; sin él la administración queda deshabilitada. En Docker Compose se lee de `.env` |
 | `DATA_DIR` | API | `/data` en Docker, `runtime` en local | Dónde se guarda el estado |
 | `SEED_MODEL_PATH` | API | `models/pycaret_housing.pkl` | `.pkl` del cuaderno que se adopta si es nuevo |
 | `BASE_DATA_PATH` | API | `1553768847-housing.csv` | Datos base de entrenamiento y evaluación |
@@ -409,6 +436,7 @@ Borra el contenido del volumen (`rm -rf /data/*` desde la terminal del servicio)
 | `API_URL` | ambos cron | *(ninguno)* | URL pública de la API |
 | `RETRAIN_POLL_SECONDS` | cron retrain | `15` | Cada cuánto consulta el progreso |
 | `RETRAIN_WAIT_SECONDS` | cron retrain | `1800` | Espera máxima antes de marcar error |
+| `HEALTH_EVERY_MINUTES`, `RETRAIN_DAYS`, `RETRAIN_HOUR_UTC` | cron de Compose | `15`, `1,15`, `6` | Horario de `cron_job.py schedule` |
 
 ### Archivos
 
@@ -416,7 +444,8 @@ Borra el contenido del volumen (`rm -rf /data/*` desde la terminal del servicio)
 |---------|-----------|
 | `pycaret_app.py` | Rutas de la API |
 | `model_store.py` | Campeón, lotes, reentrenamiento y monitoreo |
-| `cron_job.py` | Las dos tareas programadas |
+| `cron_job.py` | Las dos tareas programadas y el programador `schedule` de Docker Compose |
+| `compose.yml`, `.env.example` | Entorno local completo con Docker Compose |
 | `static/index.html` | Interfaz web |
 | `Dockerfile` | Imagen (la etapa `api` es la última) |
 | `railway.json`, `deploy/railway.*.json` | Configuración de Railway |
