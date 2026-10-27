@@ -32,9 +32,13 @@ uv → EDA → Pipeline → Cross-Validation → MLFlow → Parquet → Docker �
 
 ```
 mlops/
+├── MANUAL.md                   # 📘 Manual paso a paso: desplegar y operar la API
 ├── train.py                    # 🤖 10 modelos; selección por CV 5-Fold
 ├── app.py                      # 🚀 API REST con FastAPI
-├── pycaret_app.py              # 🚀 API del pipeline exportado por PyCaret
+├── pycaret_app.py              # 🚀 API PyCaret: interfaz, monitoreo, subida de datos y reentrenamiento
+├── model_store.py              # 🏆 Modelo campeón, lotes subidos e historial en DATA_DIR
+├── cron_job.py                 # ⏰ Cron jobs: revisión de salud y reentrenamiento quincenal
+├── static/index.html           # 🖥️ Interfaz web servida en /
 ├── pycaret_features.py         # 🧩 Esquema compartido notebook/API
 ├── monitor.py                  # 📈 Valores atípicos y registro de predicciones
 ├── feature_store.py            # 🧮 Feature Store centralizado
@@ -48,10 +52,14 @@ mlops/
 ├── .python-version             # 🐍 Python 3.12
 ├── Dockerfile                  # 🐳 Imagen multi-stage
 ├── compose.yml                 # 🐳 Docker Compose (API + MLFlow)
+├── render.yaml                 # ☁️ Blueprint de Render (API + 2 cron jobs)
+├── railway.json                # ☁️ Configuración de Railway para la API
+├── deploy/railway.*.json       # ☁️ Configuración de Railway para cada cron job
 ├── model_metrics.json          # 📋 Métricas del modelo actual
 ├── tests/
 │   ├── test_pipeline.py        # 🧪 Pipeline original
-│   └── test_pycaret_serving.py # 🧪 Esquema y API PyCaret
+│   ├── test_pycaret_serving.py # 🧪 Esquema y API PyCaret
+│   └── test_retraining.py      # 🧪 Subida de datos, reentrenamiento y cron jobs
 ├── .github/workflows/
 │   ├── ci_cd.yml               # ⚙️ CI/CD: lint → train → tests → GitHub Pages
 │   └── retrain.yml             # 🔄 Reentrenamiento semanal como artefacto
@@ -278,7 +286,81 @@ curl -X POST http://localhost:8000/monitor/check-drift \
 curl http://localhost:8000/monitor/summary
 ```
 
-El monitor no dispara el reentrenamiento ni mide error de predicción, porque la API no recibe el valor real de la vivienda. El workflow semanal ejecuta `retrain.py` y publica `best_model.pkl` junto con sus métricas como artefacto de GitHub Actions; no despliega el modelo en la API. Para usarlo localmente, descarga el artefacto y reinicia la API. La comparación de RMSE en `retrain.py` usa el holdout del CSV y solo es comparable si los datos y la partición de evaluación siguen siendo los mismos.
+Este monitor pertenece a la API original (`app.py`): guarda el registro en memoria y no dispara el reentrenamiento ni mide error de predicción, porque la API no recibe el valor real de la vivienda. La API PyCaret desplegada resuelve esas limitaciones con un ciclo propio (ver [Producción: monitoreo y reentrenamiento quincenal](#️-producción-monitoreo-y-reentrenamiento-quincenal)). El workflow semanal ejecuta `retrain.py` y publica `best_model.pkl` junto con sus métricas como artefacto de GitHub Actions; no despliega el modelo en la API. Para usarlo localmente, descarga el artefacto y reinicia la API. La comparación de RMSE en `retrain.py` usa el holdout del CSV y solo es comparable si los datos y la partición de evaluación siguen siendo los mismos.
+
+---
+
+## ♻️ Producción: monitoreo y reentrenamiento quincenal
+
+> 📘 **¿Cómo desplegarla y operarla paso a paso?** Ver el [MANUAL.md](MANUAL.md): pruebas locales, Railway, Render, formato del CSV, lectura de logs y solución de problemas.
+
+La API PyCaret (`pycaret_app.py`) sirve una interfaz web, registra cada predicción en disco y se reentrena con datos etiquetados que suben los usuarios. Dos cron jobs la llaman por HTTP:
+
+```
+                 ┌──────────── Servicio API (FastAPI + volumen /data) ────────────┐
+ Usuario ──────► │ /               interfaz: predecir, subir CSV, estado, historial│
+                 │ /predict        predicción + registro en predictions.jsonl      │
+                 │ /data/upload    CSV etiquetado (token)                          │
+                 │ /retrain        retador en segundo plano (token)                │
+                 └────────────────────────────▲──────────────────────────────────┘
+   cron health   cada 15 min ─────────────────┤ /health + predicción de prueba
+   cron retrain  días 1 y 15, 06:00 UTC ──────┘ ¿hay lotes nuevos? sí → reentrena · no → pide datos
+```
+
+**Ciclo de reentrenamiento** (`model_store.py`):
+
+1. Quien tenga el valor real de viviendas nuevas sube un CSV con las 9 columnas de entrada y `median_house_value`. Si falta una columna, hay texto en una columna numérica, valores negativos o una categoría desconocida, se rechaza el lote completo y se indica cada línea con error.
+2. El cron `retrain` llama a `POST /retrain?trigger=cron`. **Si nadie subió datos, no se entrena**: queda registrada la solicitud y la interfaz muestra "Se necesitan datos nuevos" hasta que alguien suba un lote.
+3. Con datos nuevos, `clone(campeón)` entrena un **retador** con la partición base de entrenamiento más el 80 % de cada lote. Se conservan el algoritmo y los hiperparámetros elegidos en el cuaderno; no hace falta PyCaret en producción.
+4. Campeón y retador se evalúan en el **mismo holdout**: el `data/test.csv` del cuaderno (misma semilla) más el 20 % de cada lote. Ninguno de los dos entrenó con esas filas.
+5. El retador reemplaza al campeón solo si tiene menor RMSE. El cambio es inmediato, sin reiniciar la API, y queda en el historial (y en MLflow si `MLFLOW_TRACKING_URI` está definido).
+
+**Al arrancar**, la API carga el campeón del volumen. Si no hay campeón, adopta el `.pkl` exportado por el cuaderno (`SEED_MODEL_PATH`) o, en la nube, donde `models/` no está en Git, entrena el pipeline inicial; mientras tanto `/health` responde 503. Un `.pkl` que el cuaderno exporte más tarde reemplaza al campeón en el siguiente reinicio.
+
+**Monitoreo:** `/monitor/summary` lee `predictions.jsonl`, que sobrevive a reinicios. Muestra total, últimas 24 h, promedio y el porcentaje de entradas atípicas (z-score > 3 frente al entrenamiento). Las predicciones de prueba del cron llevan `X-Health-Check: true` y no cuentan.
+
+| Ruta | Token | Uso |
+|------|:-----:|-----|
+| `GET /` | | Interfaz web |
+| `GET /health` | | 200 con la versión del modelo, 503 sin modelo |
+| `POST /predict` | | Predicción + entradas atípicas |
+| `GET /status` | | Campeón, lotes pendientes, historial |
+| `GET /monitor/summary` | | Resumen de predicciones |
+| `POST /data/upload` | ✅ | Cuerpo `text/csv` |
+| `POST /retrain` | ✅ | 202 iniciado · 200 sin datos · 409 en curso |
+| `GET /retrain/status` | | En curso o último resultado |
+
+El token va en el encabezado `X-Admin-Token` y debe ser igual a la variable `ADMIN_TOKEN`; sin ella, las rutas de administración responden 503.
+
+### Probar en local
+
+```bash
+ADMIN_TOKEN=secreto uv run uvicorn pycaret_app:app --reload   # estado en ./runtime
+# http://localhost:8000
+
+export API_URL=http://localhost:8000 ADMIN_TOKEN=secreto
+uv run python cron_job.py health
+curl -X POST localhost:8000/data/upload -H "X-Admin-Token: secreto" \
+     -H "Content-Type: text/csv" --data-binary @nuevos.csv
+uv run python cron_job.py retrain
+```
+
+### Desplegar en Railway
+
+1. **API:** *New Project → Deploy from GitHub repo*. Railway usa `Dockerfile` y `railway.json` (health check en `/health`).
+   - *Variables:* `ADMIN_TOKEN` (un valor largo y aleatorio).
+   - *Volume:* montarlo en `/data`.
+   - *Networking:* *Generate Domain*.
+2. **Cron de salud:** *New → GitHub Repo* (el mismo). En *Settings → Config-as-code* usa `deploy/railway.health.json` (o en *Settings* pon *Start Command* `python cron_job.py health` y *Cron Schedule* `*/15 * * * *`). Variable `API_URL=https://${{housing-api.RAILWAY_PUBLIC_DOMAIN}}`, cambiando `housing-api` por el nombre de tu servicio.
+3. **Cron de reentrenamiento:** igual, con `deploy/railway.retrain.json` (`python cron_job.py retrain`, `0 6 1,15 * *`). Variables `API_URL` y `ADMIN_TOKEN=${{housing-api.ADMIN_TOKEN}}`.
+
+### Desplegar en Render
+
+*New → Blueprint* y selecciona el repositorio: `render.yaml` crea la API con disco en `/data` y los dos cron jobs. Render pide los valores marcados `sync: false`: el mismo `ADMIN_TOKEN` para la API y el cron de reentrenamiento, y en `API_URL` la URL pública de la API (si aún no la conoces, ponla después en *Environment*).
+
+> ⚠️ **Memoria y costo.** El RandomForest exportado pesa 138 MB y el proceso llega a ~700 MB al reentrenar. En Render se necesita el plan `1c-2g` (el disco persistente y los cron jobs no existen en el plan gratuito); con 512 MB el reentrenamiento se queda sin memoria. En Railway el plan Hobby alcanza. Sin volumen, cada redespliegue borra los lotes subidos y el historial.
+
+> Cron no puede expresar "cada 14 días": `0 6 1,15 * *` se ejecuta los días 1 y 15 de cada mes (06:00 UTC = 01:00 en Colombia).
 
 ---
 
@@ -295,7 +377,7 @@ docker compose logs notebook
 docker compose restart api
 ```
 
-Abre Jupyter en `http://localhost:8888`, MLflow en `http://localhost:5050` y Swagger de FastAPI en `http://localhost:8000/docs`. Las tres imágenes se construyen con `uv.lock`: API y MLflow usan dependencias principales; Jupyter añade los grupos `eda` y `pycaret`. El directorio `models/` se comparte entre notebook y API, y un volumen nombrado conserva el servidor MLflow. Hasta exportar el modelo, `/health` responde 503; después de exportarlo hay que reiniciar la API para que cargue el nuevo archivo.
+Abre Jupyter en `http://localhost:8888`, MLflow en `http://localhost:5050` y la interfaz de la API en `http://localhost:8000` (Swagger en `/docs`). Para subir datos y reentrenar, levanta todo con `ADMIN_TOKEN=secreto docker compose up --build`. Las tres imágenes se construyen con `uv.lock`: API y MLflow usan dependencias principales; Jupyter añade los grupos `eda` y `pycaret`. El directorio `models/` se comparte entre notebook y API, y un volumen nombrado conserva el servidor MLflow. Si no hay modelo exportado, la API entrena el pipeline inicial al arrancar. Después de exportar uno nuevo desde el cuaderno, reinicia la API para que lo adopte. El campeón, los lotes y el historial se guardan en el volumen `api_data`.
 
 ---
 
@@ -307,13 +389,14 @@ uv run pytest -v
 uv run flake8 *.py tests/ --max-line-length=120
 ```
 
-23 tests que cubren:
+36 tests que cubren:
 - ✅ Feature Store (features derivadas, preprocesador, info, versiones) — 4
 - ✅ Monitor (logging, drift normal, drift extremo, resumen) — 5
 - ✅ Integridad de datos (CSV existe, columnas correctas, modelo existe) — 3
 - ✅ API (`/health`, `/predict` con el modelo de `train.py` y el de `retrain.py`, modelo ausente → 503, payload inválido → 422, valores atípicos) — 6
 - ✅ Serialización (los modelos se pueden guardar en MLflow con skops) — 2
 - ✅ PyCaret (esquema de features, inferencia y errores de la API) — 3
+- ✅ Reentrenamiento (arranque, validación de lotes, solicitud de datos, campeón vs. retador, token, interfaz, cron jobs) — 13
 
 ---
 
@@ -340,7 +423,8 @@ Se publican en GitHub Pages con cada push a `main`. Orden sugerido (cada una tie
 | **API** | FastAPI + Uvicorn |
 | **Contenedores** | Docker + Docker Compose |
 | **CI/CD** | GitHub Actions |
-| **Monitoreo** | Valores atípicos por z-score |
+| **Monitoreo** | Valores atípicos por z-score, registro persistente, cron de salud |
+| **Despliegue** | Render / Railway con volumen y cron jobs |
 
 ---
 
