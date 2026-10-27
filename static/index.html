@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="es">
+<head>
+<!--
+  Interfaz de la API (la sirve pycaret_app.py en "/").
+  Es un solo archivo sin dependencias externas: HTML + CSS + JavaScript.
+  Todo lo que muestra lo obtiene de la misma API con fetch():
+    /health           indicador "API en servicio"
+    /status           modelo campeón, lotes, historial y avisos
+    /monitor/summary  estadísticas de predicciones
+    /predict          formulario de predicción
+    /data/upload      subir CSV (requiere token)
+    /retrain          reentrenar a mano (requiere token)
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Housing MLOps</title>
+<style>
+  /* Colores como variables: el bloque @media los cambia para el modo oscuro
+     del sistema operativo sin tocar el resto de las reglas. */
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #5d6677; --line: #e2e5eb;
+    --accent: #2f6fde; --accent-text: #ffffff; --ok: #1f8a4c; --ok-bg: #e5f5ec;
+    --warn: #9a6200; --warn-bg: #fff4dc; --bad: #c0392b; --bad-bg: #fdecea;
+    --radius: 10px; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b2029; --text: #e6e9ef; --muted: #9aa3b2; --line: #2c3340;
+      --accent: #5b8ff0; --accent-text: #0d1117; --ok: #4cc283; --ok-bg: #173325;
+      --warn: #f0b54a; --warn-bg: #3a2d12; --bad: #f07167; --bad-bg: #3b1b1a;
+    }
+  }
+  /* Diseño general: columnas que se acomodan solas al ancho de la pantalla
+     (2 en escritorio, 1 en el celular); .wide ocupa la fila completa. */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header, main { max-width: 1100px; margin: 0 auto; padding: 0 16px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding-top: 24px; padding-bottom: 8px; }
+  h1 { font-size: 22px; margin: 0; flex: 1 1 auto; }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  /* Etiquetas de estado: verde = bien, amarillo = atención, rojo = problema. */
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+  .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .ok { color: var(--ok); background: var(--ok-bg); }
+  .warn { color: var(--warn); background: var(--warn-bg); }
+  .bad { color: var(--bad); background: var(--bad-bg); }
+  .banner { margin: 12px 0 0; padding: 12px 14px; border-radius: var(--radius); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 16px; margin: 16px 0; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; min-width: 0; }
+  .wide { grid-column: 1 / -1; }
+  form.fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  input, select, button { font: inherit; }
+  input, select {
+    padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--text); min-width: 0; width: 100%;
+  }
+  button {
+    padding: 8px 14px; border: 0; border-radius: 7px; background: var(--accent);
+    color: var(--accent-text); font-weight: 600; cursor: pointer;
+  }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button:disabled { opacity: .55; cursor: progress; }
+  .full { grid-column: 1 / -1; }
+  .result { margin-top: 14px; font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 12px; }
+  .stat .value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat .name { font-size: 12px; color: var(--muted); }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-top: 12px; }
+  .row label { flex: 1 1 200px; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; }
+  code { font-family: var(--mono); font-size: 12.5px; }
+  .message { margin-top: 10px; font-size: 13px; white-space: pre-line; }
+  footer { max-width: 1100px; margin: 0 auto 32px; padding: 0 16px; }
+  @media (max-width: 480px) { form.fields { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>California Housing · MLOps</h1>
+  <span id="health" class="pill warn">Consultando…</span>
+</header>
+<main>
+  <!-- Avisos calculados en refresh(): datos pendientes o solicitud de datos. -->
+  <div id="banner"></div>
+
+  <div class="grid">
+    <!-- Formulario de predicción: los name="" coinciden con HousingData de la API.
+         Los valores iniciales son la primera vivienda del CSV original. -->
+    <section class="panel">
+      <h2>Predecir el valor de una vivienda</h2>
+      <form id="predict-form" class="fields">
+        <label>Longitud <input name="longitude" type="number" step="any" value="-122.23" required></label>
+        <label>Latitud <input name="latitude" type="number" step="any" value="37.88" required></label>
+        <label>Edad media <input name="housing_median_age" type="number" step="any" min="0" value="41" required></label>
+        <label>Habitaciones totales <input name="total_rooms" type="number" step="any" min="0" value="880" required></label>
+        <label>Dormitorios (opcional) <input name="total_bedrooms" type="number" step="any" min="0" value="129"></label>
+        <label>Población <input name="population" type="number" step="any" min="0" value="322" required></label>
+        <label>Hogares <input name="households" type="number" step="any" min="0" value="126" required></label>
+        <label>Ingreso medio (×10k USD) <input name="median_income" type="number" step="any" min="0" value="8.3252" required></label>
+        <label class="full">Proximidad al océano
+          <select name="ocean_proximity">
+            <option>NEAR BAY</option><option>&lt;1H OCEAN</option><option>INLAND</option>
+            <option>NEAR OCEAN</option><option>ISLAND</option>
+          </select>
+        </label>
+        <div class="full"><button type="submit">Predecir</button></div>
+      </form>
+      <div id="prediction" class="result" aria-live="polite"></div>
+      <div id="prediction-note" class="message"></div>
+    </section>
+
+    <!-- Métricas del campeón (de /status) y del registro de predicciones. -->
+    <section class="panel">
+      <h2>Modelo en producción</h2>
+      <div id="champion" class="stats"></div>
+      <p id="champion-note" class="muted"></p>
+      <h2 style="margin-top:18px">Monitoreo de predicciones</h2>
+      <div id="summary" class="stats"></div>
+      <p class="muted">Una entrada es atípica si alguna variable está a más de 3 desviaciones de la media de entrenamiento.</p>
+    </section>
+
+    <!-- Administración: el token viaja en el encabezado X-Admin-Token. -->
+    <section class="panel wide">
+      <h2>Datos nuevos y reentrenamiento</h2>
+      <p class="muted">
+        El cron job reentrena los días 1 y 15 de cada mes con todos los lotes subidos. El CSV debe traer las 9 columnas
+        de entrada y <code>median_house_value</code> (el valor real). El nuevo modelo reemplaza al actual solo si tiene
+        menor RMSE en datos que ninguno de los dos vio.
+      </p>
+      <div class="row">
+        <label>Token de administración <input id="token" type="password" autocomplete="off"></label>
+        <label>CSV etiquetado <input id="file" type="file" accept=".csv,text/csv"></label>
+        <button id="upload">Subir datos</button>
+        <button id="retrain" class="secondary">Reentrenar ahora</button>
+      </div>
+      <div id="admin-message" class="message" aria-live="polite"></div>
+    </section>
+
+    <section class="panel wide">
+      <h2>Historial de entrenamientos</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Fecha</th><th>Origen</th><th>Resultado</th><th>RMSE actual</th><th>RMSE nuevo</th><th>Filas entrenamiento</th><th>Filas evaluación</th></tr></thead>
+        <tbody id="history"></tbody>
+      </table></div>
+    </section>
+
+    <section class="panel wide">
+      <h2>Lotes subidos</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Lote</th><th>Subido</th><th>Filas</th><th>Estado</th></tr></thead>
+        <tbody id="batches"></tbody>
+      </table></div>
+    </section>
+  </div>
+</main>
+<footer class="muted">API: <a href="/docs">/docs</a> · <a href="/status">/status</a> · <a href="/monitor/summary">/monitor/summary</a></footer>
+
+<script>
+// ── Utilidades ──────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+// Dólares con separador de miles al estilo colombiano: $428.842.
+const money = (v) => v == null ? "—" : "$" + Math.round(v).toLocaleString("es-CO");
+const date = (iso) => iso ? new Date(iso).toLocaleString("es-CO", { dateStyle: "medium", timeStyle: "short" }) : "—";
+// Escapa texto antes de insertarlo como HTML: los ids de lotes y los mensajes
+// de error vienen del servidor y no deben poder inyectar etiquetas.
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// Estado que devuelve la API → [clase de color, texto en español].
+const STATUS = {
+  promoted: ["ok", "Nuevo campeón"], kept: ["warn", "Se mantuvo el actual"], failed: ["bad", "Falló"],
+  awaiting_data: ["warn", "Sin datos nuevos"], running: ["warn", "En curso"], idle: ["warn", "Sin ejecuciones"],
+  used: ["ok", "Usado"], pending: ["warn", "Pendiente"],
+};
+// Quién originó cada entrenamiento (campo "trigger" del historial).
+const TRIGGER = { cron: "Programado", manual: "Manual", inicial: "Arranque inicial", cuaderno: "Exportado del cuaderno" };
+
+// sessionStorage puede no existir (modo privado); el token solo se recuerda en esta pestaña.
+try { $("token").value = sessionStorage.getItem("adminToken") || ""; } catch (e) {}
+$("token").addEventListener("change", () => { try { sessionStorage.setItem("adminToken", $("token").value); } catch (e) {} });
+
+// Pequeños generadores de HTML: una cifra con su nombre y una etiqueta de estado.
+function stat(name, value) { return `<div class="stat"><div class="value">${esc(value)}</div><div class="name">${esc(name)}</div></div>`; }
+function pill(status) { const [cls, text] = STATUS[status] || ["warn", status]; return `<span class="pill ${cls}">${esc(text)}</span>`; }
+// Convierte el "detail" de un error de FastAPI en texto legible. Puede ser un
+// texto, una lista de textos (errores del CSV) o la lista de errores de Pydantic.
+function detail(body) {
+  const d = body && body.detail;
+  return Array.isArray(d) ? d.map((x) => typeof x === "string" ? x : `${(x.loc || []).join(".")}: ${x.msg}`).join("\n") : (d || JSON.stringify(body));
+}
+
+// ── Actualización de la pantalla ────────────────────────────────────────
+// Se ejecuta al cargar, cada 15 s y después de cada acción.
+async function refresh() {
+  // 1. Indicador de salud: 503 mientras el modelo inicial se entrena.
+  try {
+    const health = await fetch("/health");
+    $("health").className = "pill " + (health.ok ? "ok" : "bad");
+    $("health").textContent = health.ok ? "API en servicio" : "Modelo no disponible";
+  } catch (e) {
+    $("health").className = "pill bad"; $("health").textContent = "Sin conexión";
+  }
+
+  // 2. Estado y monitoreo en paralelo; si la API no responde, se deja la
+  //    pantalla como estaba.
+  const [status, summary] = await Promise.all([
+    fetch("/status").then((r) => r.json()), fetch("/monitor/summary").then((r) => r.json()),
+  ]).catch(() => [null, null]);
+  if (!status) return;
+
+  // 3. Tarjetas del modelo campeón.
+  const c = status.champion;
+  $("champion").innerHTML = c
+    ? stat("Versión", c.version) + stat("RMSE", money(c.metrics.rmse)) + stat("MAE", money(c.metrics.mae)) + stat("R²", c.metrics.r2.toFixed(3))
+    : stat("Versión", "—");
+  $("champion-note").textContent = c ? `${c.algorithm} · ${TRIGGER[c.trigger] || c.trigger} · ${date(c.trained_at)}` : "Preparando el modelo inicial…";
+
+  // 4. Tarjetas del monitoreo de predicciones.
+  $("summary").innerHTML = summary.total_predictions
+    ? stat("Predicciones", summary.total_predictions.toLocaleString("es-CO")) + stat("Últimas 24 h", summary.last_24h)
+      + stat("Promedio", money(summary.avg_prediction)) + stat("Atípicas 24 h", (summary.outlier_rate_24h * 100).toFixed(1) + " %")
+    : stat("Predicciones", 0);
+
+  // 5. Avisos. El rojo aparece cuando el cron intentó reentrenar y no había
+  //    datos; desaparece en cuanto alguien sube un lote.
+  const banner = [];
+  if (status.retrain.status === "running") banner.push(["warn", `Reentrenamiento en curso desde ${date(status.retrain.started_at)}.`]);
+  if (status.data_requested_at) {
+    banner.push(["bad", `Se necesitan datos nuevos: el reentrenamiento del ${date(status.data_requested_at)} se omitió porque nadie subió datos.`]);
+  } else if (!status.pending_batches) {
+    banner.push(["warn", "Aún no hay datos nuevos para el próximo reentrenamiento programado. Suba un CSV etiquetado."]);
+  } else {
+    banner.push(["ok", `${status.pending_batches} lote(s) con ${status.pending_rows.toLocaleString("es-CO")} filas esperan el próximo reentrenamiento.`]);
+  }
+  $("banner").innerHTML = banner.map(([cls, text]) => `<div class="banner ${cls}">${esc(text)}</div>`).join("");
+
+  // 6. Tablas. En el arranque inicial no hay métricas de "campeón anterior",
+  //    por eso "RMSE nuevo" usa metrics cuando falta challenger_metrics.
+  $("history").innerHTML = status.history.map((h) => `<tr>
+      <td>${date(h.finished_at)}</td><td>${esc(TRIGGER[h.trigger] || h.trigger)}</td><td>${pill(h.status)}${h.error ? " " + esc(h.error) : ""}</td>
+      <td>${money(h.champion_metrics?.rmse)}</td><td>${money(h.challenger_metrics?.rmse ?? h.metrics?.rmse)}</td>
+      <td>${h.train_rows?.toLocaleString("es-CO") ?? "—"}</td><td>${h.eval_rows?.toLocaleString("es-CO") ?? "—"}</td></tr>`).join("")
+    || `<tr><td colspan="7" class="muted">Sin entrenamientos registrados.</td></tr>`;
+
+  $("batches").innerHTML = status.batches.map((b) => `<tr>
+      <td><code>${esc(b.id)}</code></td><td>${date(b.uploaded_at)}</td><td>${b.rows.toLocaleString("es-CO")}</td>
+      <td>${pill(b.used_in_training ? "used" : "pending")}</td></tr>`).join("")
+    || `<tr><td colspan="4" class="muted">Todavía no se han subido datos.</td></tr>`;
+}
+
+// ── Acciones ────────────────────────────────────────────────────────────
+// Predicción: el formulario entrega texto; se convierte a número (o null si
+// el campo opcional de dormitorios quedó vacío) antes de enviarlo como JSON.
+$("predict-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const payload = Object.fromEntries(new FormData(event.target));
+  for (const key of Object.keys(payload)) {
+    if (key !== "ocean_proximity") payload[key] = payload[key] === "" ? null : Number(payload[key]);
+  }
+  const response = await fetch("/predict", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  const body = await response.json();
+  if (!response.ok) { $("prediction").textContent = ""; $("prediction-note").textContent = detail(body); return; }
+  $("prediction").textContent = money(body.predicted_median_house_value);
+  $("prediction-note").textContent = body.outliers.length
+    ? "⚠️ Entrada atípica en: " + body.outliers.map((o) => `${o.feature} (z = ${o.z_score})`).join(", ") + ". La predicción es menos confiable."
+    : `Modelo ${body.model_version}.`;
+  refresh();
+});
+
+// POST con el token de administración. Desactiva el botón mientras espera
+// para evitar envíos dobles.
+async function admin(button, path, options) {
+  button.disabled = true;
+  try {
+    const response = await fetch(path, { method: "POST", ...options, headers: { "X-Admin-Token": $("token").value, ...(options.headers || {}) } });
+    const body = await response.json();
+    return [response, body];
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// Subir CSV: el archivo se envía tal cual como cuerpo text/csv.
+$("upload").addEventListener("click", async () => {
+  const file = $("file").files[0];
+  if (!file) { $("admin-message").textContent = "Elija un archivo CSV."; return; }
+  const [response, body] = await admin($("upload"), "/data/upload", { body: file, headers: { "Content-Type": "text/csv" } });
+  $("admin-message").textContent = response.ok ? `✅ Lote ${body.id} guardado con ${body.rows} filas.` : "❌ " + detail(body);
+  refresh();
+});
+
+// Reentrenar a mano: igual que el cron (si no hay datos nuevos, solo los pide).
+// 409 = ya hay uno en curso, no es un error.
+$("retrain").addEventListener("click", async () => {
+  const [response, body] = await admin($("retrain"), "/retrain?trigger=manual", {});
+  $("admin-message").textContent = response.ok || response.status === 409 ? (body.message || "Reentrenamiento iniciado.") : "❌ " + detail(body);
+  refresh();
+});
+
+// Primera carga y actualización periódica (muestra el fin de un reentrenamiento).
+refresh();
+setInterval(refresh, 15000);
+</script>
+</body>
+</html>

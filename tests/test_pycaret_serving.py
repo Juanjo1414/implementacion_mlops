@@ -29,14 +29,14 @@ def test_prepared_features_use_fixed_schema():
     assert result.loc[0, "total_bedrooms"] == -1
 
 
-def test_pycaret_api_predicts_with_prepared_schema(monkeypatch):
+def test_pycaret_api_predicts_with_prepared_schema(store, monkeypatch):
     """La API envía al pipeline exactamente las columnas exportadas."""
     class RecordingModel:
         def predict(self, frame):
             assert frame.columns.tolist() == PYCARET_FEATURES
             return [250000.0]
 
-    monkeypatch.setattr(pycaret_app, "model", RecordingModel())
+    monkeypatch.setattr(store, "model", RecordingModel())
     client = TestClient(pycaret_app.app)
     assert client.get("/health").status_code == 200
     response = client.post("/predict", json=SAMPLE_HOUSE)
@@ -44,13 +44,13 @@ def test_pycaret_api_predicts_with_prepared_schema(monkeypatch):
     assert response.json()["predicted_median_house_value"] == 250000.0
 
 
-def test_pycaret_api_rejects_unknown_category_and_missing_model(monkeypatch):
+def test_pycaret_api_rejects_unknown_category_and_missing_model(store, monkeypatch):
     """Errores de entrada y falta del artefacto tienen códigos HTTP claros."""
-    monkeypatch.setattr(pycaret_app, "model", object())
+    monkeypatch.setattr(store, "model", object())
     client = TestClient(pycaret_app.app)
     bad_house = {**SAMPLE_HOUSE, "ocean_proximity": "UNKNOWN"}
     assert client.post("/predict", json=bad_house).status_code == 422
 
-    monkeypatch.setattr(pycaret_app, "model", None)
+    monkeypatch.setattr(store, "model", None)
     assert client.get("/health").status_code == 503
     assert client.post("/predict", json=SAMPLE_HOUSE).status_code == 503
