@@ -3,90 +3,264 @@
 <head>
 <!--
   Interfaz de la API (la sirve pycaret_app.py en "/").
-  Es un solo archivo sin dependencias externas: HTML + CSS + JavaScript.
-  Todo lo que muestra lo obtiene de la misma API con fetch():
+  HTML + CSS + JavaScript en un solo archivo; la única dependencia externa es
+  la tipografía (Google Fonts). Todo lo demás lo obtiene de la misma API con fetch():
     /health           indicador "API en servicio"
     /status           modelo campeón, lotes, historial y avisos
     /monitor/summary  estadísticas de predicciones
     /predict          formulario de predicción
     /data/upload      subir CSV (requiere token)
     /retrain          reentrenar a mano (requiere token)
+
+  Dirección visual: plano de ingeniería / cianotipo. El dominio es literal —
+  viviendas (planos arquitectónicos), coordenadas (planos de levantamiento),
+  una universidad de ingeniería — así que la hoja de trabajo técnica no es
+  un disfraz, es el vocabulario del propio problema.
 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Housing MLOps</title>
+<meta name="theme-color" content="#0b2038">
+<title>Housing MLOps · Universidad EIA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  /* Colores como variables: el bloque @media los cambia para el modo oscuro
-     del sistema operativo sin tocar el resto de las reglas. */
   :root {
-    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #5d6677; --line: #e2e5eb;
-    --accent: #2f6fde; --accent-text: #ffffff; --ok: #1f8a4c; --ok-bg: #e5f5ec;
-    --warn: #9a6200; --warn-bg: #fff4dc; --bad: #c0392b; --bad-bg: #fdecea;
-    --radius: 10px; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    /* Cianotipo: tinta azul profunda, líneas frías, una sola marca cálida
+       (rojo de corrección "redline") reservada a acción primaria y error. */
+    --ink: #0b2038; --panel: #102a47; --panel-alt: #15324f;
+    --text: #e8f1f8; --text-bright: #ffffff; --muted: #9bb4c9;
+    --line: #28496a; --line-bright: #4c87ac;
+
+    --accent: #d2502f; --accent-hover: #b8432a; --accent-text: #fff7f2;
+    --accent-soft: #2c1c16; --accent-soft-ink: #f0a688;
+
+    --ok: #5ed2a8; --ok-bg: #11302a; --ok-line: #235847;
+    --warn: #e6b854; --warn-bg: #33290f; --warn-line: #59461e;
+    --bad: #ef8169; --bad-bg: #371c17; --bad-line: #5e342a;
+
+    --radius: 3px;
+    --sans: "IBM Plex Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
+    --display: "Big Shoulders Display", var(--sans);
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --focus-ring: 0 0 0 3px rgba(210, 80, 47, .35);
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #12151b; --panel: #1b2029; --text: #e6e9ef; --muted: #9aa3b2; --line: #2c3340;
-      --accent: #5b8ff0; --accent-text: #0d1117; --ok: #4cc283; --ok-bg: #173325;
-      --warn: #f0b54a; --warn-bg: #3a2d12; --bad: #f07167; --bad-bg: #3b1b1a;
-    }
-  }
-  /* Diseño general: columnas que se acomodan solas al ancho de la pantalla
-     (2 en escritorio, 1 en el celular); .wide ocupa la fila completa. */
+
   * { box-sizing: border-box; }
+  html { color-scheme: dark; }
+  ::selection { background: var(--accent-soft); color: var(--accent-soft-ink); }
   body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    margin: 0; background: var(--ink); color: var(--text);
+    font: 15px/1.55 var(--sans); -webkit-font-smoothing: antialiased;
+    /* Papel cuadriculado de plano, muy tenue; el único fondo decorativo de la página. */
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+    position: relative;
   }
-  header, main { max-width: 1100px; margin: 0 auto; padding: 0 16px; }
-  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding-top: 24px; padding-bottom: 8px; }
-  h1 { font-size: 22px; margin: 0; flex: 1 1 auto; }
-  h2 { font-size: 16px; margin: 0 0 12px; }
-  /* Etiquetas de estado: verde = bien, amarillo = atención, rojo = problema. */
-  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; }
-  .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-  .ok { color: var(--ok); background: var(--ok-bg); }
-  .warn { color: var(--warn); background: var(--warn-bg); }
-  .bad { color: var(--bad); background: var(--bad-bg); }
-  .banner { margin: 12px 0 0; padding: 12px 14px; border-radius: var(--radius); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 16px; margin: 16px 0; }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; min-width: 0; }
+  body::before {
+    /* Atenúa la cuadrícula sin un segundo color de fondo. */
+    content: ""; position: fixed; inset: 0; background: var(--ink); opacity: .86; z-index: -1;
+  }
+  a { color: var(--line-bright); }
+  a:hover { color: var(--accent-soft-ink); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Regla de escuadra fija a la izquierda: la única licencia decorativa de la
+     página, tomada del borde de levantamiento de un plano. Se retira en pantallas
+     angostas para no robar espacio. */
+  .scale-rule {
+    position: fixed; left: 0; top: 0; bottom: 0; width: 18px; z-index: 0; pointer-events: none;
+    background-image: repeating-linear-gradient(to bottom, var(--line-bright) 0 1px, transparent 1px 7px),
+                       repeating-linear-gradient(to bottom, var(--line-bright) 0 1.5px, transparent 1.5px 35px);
+    background-position: right 0 top 0, right 0 top 0;
+    background-repeat: repeat-y;
+    opacity: .4;
+    border-right: 1px solid var(--line);
+  }
+  @media (max-width: 900px) { .scale-rule { display: none; } }
+
+  header, main, footer { max-width: 1160px; margin: 0 auto; padding-left: 20px; padding-right: 20px; position: relative; z-index: 1; }
+  @media (min-width: 901px) { header, main, footer { padding-left: 46px; } }
+
+  /* ── Bloque de rotulación (cabecera) ─────────────────────────────────
+     Tomado del cajetín de un plano de ingeniería: título a la izquierda,
+     datos institucionales en una celda aparte, separados por una regla. */
+  header {
+    display: grid; grid-template-columns: 1fr auto; gap: 0;
+    border: 1px solid var(--line); border-radius: var(--radius); margin-top: 26px;
+    background: var(--panel);
+  }
+  .tb-main { padding: 20px 24px; border-right: 1px solid var(--line); }
+  h1 {
+    font-family: var(--display); font-weight: 800; font-size: 34px; line-height: 1;
+    margin: 0; letter-spacing: -0.01em; color: var(--text-bright);
+  }
+  .tb-main p { margin: 9px 0 0; color: var(--muted); font-size: 13.5px; max-width: 52ch; }
+  .tb-meta { padding: 16px 22px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; min-width: 190px; }
+  .tb-org { line-height: 1.4; }
+  .tb-org strong { display: block; font-size: 14px; color: var(--text); font-weight: 600; }
+  .tb-org span { display: block; font-size: 11.5px; color: var(--muted); }
+  @media (max-width: 640px) { header { grid-template-columns: 1fr; } .tb-main { border-right: none; border-bottom: 1px solid var(--line); } }
+
+  .status { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; }
+  .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+  .status.ok { color: var(--ok); } .status.warn { color: var(--warn); } .status.bad { color: var(--bad); }
+
+  h2 {
+    font-family: var(--display); font-weight: 700; font-size: 19px; margin: 0 0 14px;
+    color: var(--text-bright); display: flex; align-items: center; gap: 9px; letter-spacing: -0.005em;
+  }
+  h2.spaced { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
+  h2 svg { width: 17px; height: 17px; stroke: var(--line-bright); flex: none; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; border: 1px solid transparent; white-space: nowrap;
+  }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+  .ok { color: var(--ok); background: var(--ok-bg); border-color: var(--ok-line); }
+  .warn { color: var(--warn); background: var(--warn-bg); border-color: var(--warn-line); }
+  .bad { color: var(--bad); background: var(--bad-bg); border-color: var(--bad-line); }
+
+  .banner {
+    margin: 16px 0 0; padding: 11px 14px; border-radius: var(--radius); border: 1px solid;
+    display: flex; align-items: flex-start; gap: 9px; font-size: 13.5px;
+  }
+  .banner svg { width: 16px; height: 16px; flex: none; margin-top: 1px; stroke: currentColor; }
+
+  main { padding-top: 22px; padding-bottom: 8px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 430px), 1fr)); gap: 16px; margin: 18px 0; align-items: start; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 22px 24px; min-width: 0;
+  }
+  .panel--primary { box-shadow: 6px 6px 0 -5px var(--line), 0 10px 26px -18px rgba(0, 0, 0, .6); }
+  .panel--quiet { background: var(--panel-alt); }
   .wide { grid-column: 1 / -1; }
-  form.fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
-  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
-  input, select, button { font: inherit; }
+
+  /* ── Formulario de predicción ──────────────────────────────────────── */
+  form.fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; }
+  .field-group {
+    grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px;
+    padding: 13px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-alt);
+  }
+  .field-group .group-label {
+    grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--muted);
+  }
+  .field-group .group-label svg { width: 14px; height: 14px; stroke: var(--line-bright); }
+
+  label { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; font-weight: 500; color: var(--muted); }
+  input, select, button { font: inherit; color: inherit; }
   input, select {
-    padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
-    background: var(--bg); color: var(--text); min-width: 0; width: 100%;
+    padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--ink); color: var(--text); min-width: 0; width: 100%;
+    font-family: var(--mono); font-size: 13.5px; font-variant-numeric: tabular-nums;
+    transition: border-color .12s ease, box-shadow .12s ease;
   }
+  input:hover, select:hover { border-color: var(--line-bright); }
+  input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+  input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type="number"] { -moz-appearance: textfield; }
+  select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239bb4c9' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 11px center; padding-right: 28px;
+  }
+
   button {
-    padding: 8px 14px; border: 0; border-radius: 7px; background: var(--accent);
-    color: var(--accent-text); font-weight: 600; cursor: pointer;
+    padding: 10px 18px; border: 1px solid var(--accent); border-radius: var(--radius);
+    background: var(--accent); color: var(--accent-text); font-weight: 600; font-size: 13.5px;
+    font-family: var(--sans); letter-spacing: .01em; cursor: pointer;
+    transition: background .12s ease, transform .08s ease, box-shadow .12s ease;
   }
-  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
-  button:disabled { opacity: .55; cursor: progress; }
+  button:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button.secondary { background: transparent; color: var(--line-bright); border-color: var(--line); }
+  button.secondary:hover:not(:disabled) { border-color: var(--line-bright); color: var(--text); }
+  button:disabled { opacity: .5; cursor: progress; }
+  button:focus-visible { box-shadow: var(--focus-ring); }
+
   .full { grid-column: 1 / -1; }
-  .result { margin-top: 14px; font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  .readout {
+    margin-top: 16px; border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--panel-alt); padding: 14px 16px;
+  }
+  .readout .r-label { font-size: 12px; color: var(--muted); }
+  .readout .r-value {
+    display: block; margin-top: 4px; font-family: var(--display); font-weight: 700;
+    font-size: 32px; line-height: 1; color: var(--text-bright); font-variant-numeric: tabular-nums;
+  }
   .muted { color: var(--muted); font-size: 13px; }
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 12px; }
-  .stat .value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .stat .name { font-size: 12px; color: var(--muted); }
-  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-top: 12px; }
-  .row label { flex: 1 1 200px; }
-  .table-wrap { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
-  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  th { color: var(--muted); font-weight: 600; }
-  code { font-family: var(--mono); font-size: 12.5px; }
-  .message { margin-top: 10px; font-size: 13px; white-space: pre-line; }
-  footer { max-width: 1100px; margin: 0 auto 32px; padding: 0 16px; }
-  @media (max-width: 480px) { form.fields { grid-template-columns: 1fr; } }
+  .message { margin-top: 10px; font-size: 13px; display: flex; align-items: flex-start; gap: 7px; white-space: pre-line; }
+  .message svg { width: 15px; height: 15px; flex: none; margin-top: 2px; stroke: currentColor; }
+  .message.ok-text { color: var(--ok); } .message.warn-text { color: var(--warn); } .message.bad-text { color: var(--bad); }
+
+  /* ── Lecturas tipo instrumento: fila etiqueta/valor, no tarjetas ─────── */
+  .readout-list { display: flex; flex-direction: column; }
+  .readout-row {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 14px;
+    padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13.5px;
+  }
+  .readout-row:last-child { border-bottom: none; }
+  .readout-row .r-label { color: var(--muted); }
+  .readout-row .r-value { font-family: var(--mono); font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; text-align: right; }
+
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-top: 4px; }
+  .row label { flex: 1 1 220px; }
+  .row > button { flex: none; }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  td:nth-child(2), td:nth-child(3) { font-family: var(--sans); }
+  th { color: var(--muted); font-weight: 500; font-size: 12.5px; background: var(--panel-alt); }
+  tbody tr:hover { background: var(--panel-alt); }
+  tbody tr:last-child td { border-bottom: none; }
+  code {
+    font-family: var(--mono); font-size: 12.5px; background: var(--panel-alt);
+    padding: 1px 5px; border-radius: 3px; color: var(--muted);
+  }
+
+  footer {
+    margin-top: 10px; margin-bottom: 36px; padding-top: 16px; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 13px; display: flex; gap: 18px; flex-wrap: wrap;
+  }
+  footer a { text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  ::-webkit-scrollbar { width: 11px; height: 11px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 999px; border: 3px solid var(--ink); }
+  .table-wrap::-webkit-scrollbar-thumb { border-color: var(--panel); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--line-bright); }
+
+  @media (max-width: 640px) {
+    form.fields, .field-group { grid-template-columns: 1fr; }
+    .panel { padding: 17px; }
+    h1 { font-size: 27px; }
+    .readout .r-value { font-size: 26px; }
+  }
 </style>
 </head>
 <body>
+<div class="scale-rule" aria-hidden="true"></div>
 <header>
-  <h1>California Housing · MLOps</h1>
-  <span id="health" class="pill warn">Consultando…</span>
+  <div class="tb-main">
+    <h1>California Housing</h1>
+    <p>Predicción de valor de vivienda con monitoreo del modelo y reentrenamiento continuo a partir de datos nuevos.</p>
+  </div>
+  <div class="tb-meta">
+    <div class="tb-org">
+      <strong>Universidad EIA</strong>
+      <span>Ingeniería e Integración de Software</span>
+    </div>
+    <span id="health" class="status warn">Consultando…</span>
+  </div>
 </header>
 <main>
   <!-- Avisos calculados en refresh(): datos pendientes o solicitud de datos. -->
@@ -95,11 +269,20 @@
   <div class="grid">
     <!-- Formulario de predicción: los name="" coinciden con HousingData de la API.
          Los valores iniciales son la primera vivienda del CSV original. -->
-    <section class="panel">
-      <h2>Predecir el valor de una vivienda</h2>
+    <section class="panel panel--primary">
+      <h2>
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v9a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1v-9"/></svg>
+        Predecir el valor de una vivienda
+      </h2>
       <form id="predict-form" class="fields">
-        <label>Longitud <input name="longitude" type="number" step="any" value="-122.23" required></label>
-        <label>Latitud <input name="latitude" type="number" step="any" value="37.88" required></label>
+        <div class="field-group">
+          <span class="group-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M12 21s7-6.1 7-11.5A7 7 0 0 0 5 9.5C5 14.9 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.4"/></svg>
+            Ubicación
+          </span>
+          <label>Longitud <input name="longitude" type="number" step="any" value="-122.23" required></label>
+          <label>Latitud <input name="latitude" type="number" step="any" value="37.88" required></label>
+        </div>
         <label>Edad media <input name="housing_median_age" type="number" step="any" min="0" value="41" required></label>
         <label>Habitaciones totales <input name="total_rooms" type="number" step="any" min="0" value="880" required></label>
         <label>Dormitorios (opcional) <input name="total_bedrooms" type="number" step="any" min="0" value="129"></label>
@@ -114,23 +297,35 @@
         </label>
         <div class="full"><button type="submit">Predecir</button></div>
       </form>
-      <div id="prediction" class="result" aria-live="polite"></div>
+      <div class="readout">
+        <span class="r-label">Valor estimado</span>
+        <span id="prediction" class="r-value" aria-live="polite">—</span>
+      </div>
       <div id="prediction-note" class="message"></div>
     </section>
 
     <!-- Métricas del campeón (de /status) y del registro de predicciones. -->
     <section class="panel">
-      <h2>Modelo en producción</h2>
-      <div id="champion" class="stats"></div>
-      <p id="champion-note" class="muted"></p>
-      <h2 style="margin-top:18px">Monitoreo de predicciones</h2>
-      <div id="summary" class="stats"></div>
-      <p class="muted">Una entrada es atípica si alguna variable está a más de 3 desviaciones de la media de entrenamiento.</p>
+      <h2>
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+        Modelo en producción
+      </h2>
+      <div id="champion" class="readout-list"></div>
+      <p id="champion-note" class="muted" style="margin-top:12px">Preparando el modelo inicial…</p>
+      <h2 class="spaced">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+        Monitoreo de predicciones
+      </h2>
+      <div id="summary" class="readout-list"></div>
+      <p class="muted" style="margin-top:12px">Una entrada es atípica si alguna variable está a más de 3 desviaciones de la media de entrenamiento.</p>
     </section>
 
     <!-- Administración: el token viaja en el encabezado X-Admin-Token. -->
-    <section class="panel wide">
-      <h2>Datos nuevos y reentrenamiento</h2>
+    <section class="panel panel--quiet wide">
+      <h2>
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M12 2 4 5v6c0 5 3.4 8.7 8 11 4.6-2.3 8-6 8-11V5l-8-3Z"/></svg>
+        Datos nuevos y reentrenamiento
+      </h2>
       <p class="muted">
         El cron job reentrena los días 1 y 15 de cada mes con todos los lotes subidos. El CSV debe traer las 9 columnas
         de entrada y <code>median_house_value</code> (el valor real). El nuevo modelo reemplaza al actual solo si tiene
@@ -146,7 +341,10 @@
     </section>
 
     <section class="panel wide">
-      <h2>Historial de entrenamientos</h2>
+      <h2>
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M4 19V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14l-4-2-4 2-4-2-4 2Z"/></svg>
+        Historial de entrenamientos
+      </h2>
       <div class="table-wrap"><table>
         <thead><tr><th>Fecha</th><th>Origen</th><th>Resultado</th><th>RMSE actual</th><th>RMSE nuevo</th><th>Filas entrenamiento</th><th>Filas evaluación</th></tr></thead>
         <tbody id="history"></tbody>
@@ -154,7 +352,10 @@
     </section>
 
     <section class="panel wide">
-      <h2>Lotes subidos</h2>
+      <h2>
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v16"/></svg>
+        Lotes subidos
+      </h2>
       <div class="table-wrap"><table>
         <thead><tr><th>Lote</th><th>Subido</th><th>Filas</th><th>Estado</th></tr></thead>
         <tbody id="batches"></tbody>
@@ -162,7 +363,7 @@
     </section>
   </div>
 </main>
-<footer class="muted">API: <a href="/docs">/docs</a> · <a href="/status">/status</a> · <a href="/monitor/summary">/monitor/summary</a></footer>
+<footer><a href="/docs">Documentación de la API</a><a href="/status">/status</a><a href="/monitor/summary">/monitor/summary</a></footer>
 
 <script>
 // ── Utilidades ──────────────────────────────────────────────────────────
@@ -182,13 +383,21 @@ const STATUS = {
 // Quién originó cada entrenamiento (campo "trigger" del historial).
 const TRIGGER = { cron: "Programado", manual: "Manual", inicial: "Arranque inicial", cuaderno: "Exportado del cuaderno" };
 
+// Pequeños iconos SVG en línea: reemplazan los emoji como sistema visual consistente.
+const ICONS = {
+  ok: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 5-5"/></svg>',
+  warn: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M10.6 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.4 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9.5v4.2M12 17h.01"/></svg>',
+  bad: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/></svg>',
+};
+
 // sessionStorage puede no existir (modo privado); el token solo se recuerda en esta pestaña.
 try { $("token").value = sessionStorage.getItem("adminToken") || ""; } catch (e) {}
 $("token").addEventListener("change", () => { try { sessionStorage.setItem("adminToken", $("token").value); } catch (e) {} });
 
-// Pequeños generadores de HTML: una cifra con su nombre y una etiqueta de estado.
-function stat(name, value) { return `<div class="stat"><div class="value">${esc(value)}</div><div class="name">${esc(name)}</div></div>`; }
+// Pequeños generadores de HTML: una fila de lectura, una etiqueta de estado y un mensaje con icono.
+function row(label, value) { return `<div class="readout-row"><span class="r-label">${esc(label)}</span><span class="r-value">${esc(value)}</span></div>`; }
 function pill(status) { const [cls, text] = STATUS[status] || ["warn", status]; return `<span class="pill ${cls}">${esc(text)}</span>`; }
+function message(el, tone, text) { el.className = "message " + tone + "-text"; el.innerHTML = ICONS[tone] + `<span>${esc(text)}</span>`; }
 // Convierte el "detail" de un error de FastAPI en texto legible. Puede ser un
 // texto, una lista de textos (errores del CSV) o la lista de errores de Pydantic.
 function detail(body) {
@@ -202,10 +411,10 @@ async function refresh() {
   // 1. Indicador de salud: 503 mientras el modelo inicial se entrena.
   try {
     const health = await fetch("/health");
-    $("health").className = "pill " + (health.ok ? "ok" : "bad");
+    $("health").className = "status " + (health.ok ? "ok" : "bad");
     $("health").textContent = health.ok ? "API en servicio" : "Modelo no disponible";
   } catch (e) {
-    $("health").className = "pill bad"; $("health").textContent = "Sin conexión";
+    $("health").className = "status bad"; $("health").textContent = "Sin conexión";
   }
 
   // 2. Estado y monitoreo en paralelo; si la API no responde, se deja la
@@ -215,18 +424,20 @@ async function refresh() {
   ]).catch(() => [null, null]);
   if (!status) return;
 
-  // 3. Tarjetas del modelo campeón.
+  // 3. Lectura del modelo campeón.
   const c = status.champion;
   $("champion").innerHTML = c
-    ? stat("Versión", c.version) + stat("RMSE", money(c.metrics.rmse)) + stat("MAE", money(c.metrics.mae)) + stat("R²", c.metrics.r2.toFixed(3))
-    : stat("Versión", "—");
-  $("champion-note").textContent = c ? `${c.algorithm} · ${TRIGGER[c.trigger] || c.trigger} · ${date(c.trained_at)}` : "Preparando el modelo inicial…";
+    ? row("Versión", c.version) + row("Algoritmo", c.algorithm) + row("Origen", TRIGGER[c.trigger] || c.trigger)
+      + row("Entrenado", date(c.trained_at)) + row("RMSE", money(c.metrics.rmse)) + row("MAE", money(c.metrics.mae)) + row("R²", c.metrics.r2.toFixed(3))
+    : row("Versión", "—");
+  $("champion-note").textContent = c ? "" : "Preparando el modelo inicial…";
+  $("champion-note").style.display = c ? "none" : "block";
 
-  // 4. Tarjetas del monitoreo de predicciones.
+  // 4. Lectura del monitoreo de predicciones.
   $("summary").innerHTML = summary.total_predictions
-    ? stat("Predicciones", summary.total_predictions.toLocaleString("es-CO")) + stat("Últimas 24 h", summary.last_24h)
-      + stat("Promedio", money(summary.avg_prediction)) + stat("Atípicas 24 h", (summary.outlier_rate_24h * 100).toFixed(1) + " %")
-    : stat("Predicciones", 0);
+    ? row("Predicciones", summary.total_predictions.toLocaleString("es-CO")) + row("Últimas 24 h", summary.last_24h)
+      + row("Promedio", money(summary.avg_prediction)) + row("Atípicas 24 h", (summary.outlier_rate_24h * 100).toFixed(1) + " %")
+    : row("Predicciones", 0);
 
   // 5. Avisos. El rojo aparece cuando el cron intentó reentrenar y no había
   //    datos; desaparece en cuanto alguien sube un lote.
@@ -239,7 +450,7 @@ async function refresh() {
   } else {
     banner.push(["ok", `${status.pending_batches} lote(s) con ${status.pending_rows.toLocaleString("es-CO")} filas esperan el próximo reentrenamiento.`]);
   }
-  $("banner").innerHTML = banner.map(([cls, text]) => `<div class="banner ${cls}">${esc(text)}</div>`).join("");
+  $("banner").innerHTML = banner.map(([cls, text]) => `<div class="banner ${cls}">${ICONS[cls]}<span>${esc(text)}</span></div>`).join("");
 
   // 6. Tablas. En el arranque inicial no hay métricas de "campeón anterior",
   //    por eso "RMSE nuevo" usa metrics cuando falta challenger_metrics.
@@ -266,11 +477,13 @@ $("predict-form").addEventListener("submit", async (event) => {
   }
   const response = await fetch("/predict", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
   const body = await response.json();
-  if (!response.ok) { $("prediction").textContent = ""; $("prediction-note").textContent = detail(body); return; }
+  if (!response.ok) { $("prediction").textContent = "—"; message($("prediction-note"), "bad", detail(body)); return; }
   $("prediction").textContent = money(body.predicted_median_house_value);
-  $("prediction-note").textContent = body.outliers.length
-    ? "⚠️ Entrada atípica en: " + body.outliers.map((o) => `${o.feature} (z = ${o.z_score})`).join(", ") + ". La predicción es menos confiable."
-    : `Modelo ${body.model_version}.`;
+  if (body.outliers.length) {
+    message($("prediction-note"), "warn", "Entrada atípica en: " + body.outliers.map((o) => `${o.feature} (z = ${o.z_score})`).join(", ") + ". La predicción es menos confiable.");
+  } else {
+    $("prediction-note").className = "message"; $("prediction-note").innerHTML = `<span class="muted">Modelo ${esc(body.model_version)}.</span>`;
+  }
   refresh();
 });
 
@@ -290,9 +503,10 @@ async function admin(button, path, options) {
 // Subir CSV: el archivo se envía tal cual como cuerpo text/csv.
 $("upload").addEventListener("click", async () => {
   const file = $("file").files[0];
-  if (!file) { $("admin-message").textContent = "Elija un archivo CSV."; return; }
+  if (!file) { message($("admin-message"), "warn", "Elija un archivo CSV."); return; }
   const [response, body] = await admin($("upload"), "/data/upload", { body: file, headers: { "Content-Type": "text/csv" } });
-  $("admin-message").textContent = response.ok ? `✅ Lote ${body.id} guardado con ${body.rows} filas.` : "❌ " + detail(body);
+  if (response.ok) message($("admin-message"), "ok", `Lote ${body.id} guardado con ${body.rows} filas.`);
+  else message($("admin-message"), "bad", detail(body));
   refresh();
 });
 
@@ -300,7 +514,8 @@ $("upload").addEventListener("click", async () => {
 // 409 = ya hay uno en curso, no es un error.
 $("retrain").addEventListener("click", async () => {
   const [response, body] = await admin($("retrain"), "/retrain?trigger=manual", {});
-  $("admin-message").textContent = response.ok || response.status === 409 ? (body.message || "Reentrenamiento iniciado.") : "❌ " + detail(body);
+  if (response.ok || response.status === 409) message($("admin-message"), "ok", body.message || "Reentrenamiento iniciado.");
+  else message($("admin-message"), "bad", detail(body));
   refresh();
 });
 

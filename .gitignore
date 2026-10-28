@@ -56,3 +56,10 @@ runtime/
 
 # Secretos locales (copiar .env.example como .env)
 .env
+
+# Terraform: state y variables contienen el ADMIN_TOKEN y la clave privada
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/terraform.tfvars
+terraform/*.pem
