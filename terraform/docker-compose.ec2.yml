@@ -1,0 +1,7 @@
+# Override para EC2: publica la API en todas las interfaces, no solo en
+# localhost (compose.yml usa 127.0.0.1 porque está pensado para correr en tu
+# máquina). user_data.sh.tpl copia este archivo junto al repo clonado.
+services:
+  api:
+    ports:
+      - "0.0.0.0:8000:8000"
